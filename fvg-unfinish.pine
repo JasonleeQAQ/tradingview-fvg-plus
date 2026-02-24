@@ -1,0 +1,491 @@
+﻿//@version=6
+indicator('Imbalance Detector [LuxAlgo]', overlay = true, max_boxes_count = 500, max_labels_count = 500, max_lines_count = 500)
+//------------------------------------------------------------------------------
+//Settings
+//-----------------------------------------------------------------------------{
+//Fair Value Gaps
+show_fvg = input(true, '公允价值缺口 (FVG)', inline = 'fvg_css', group = '公允价值缺口')
+
+bull_fvg_css = input.color(#2157f3, '', inline = 'fvg_css', group = '公允价值缺口')
+
+bear_fvg_css = input.color(#ff1100, '', inline = 'fvg_css', group = '公允价值缺口')
+
+fvg_usewidth = input(false, '最小宽度', inline = 'fvg_width', group = '公允价值缺口')
+
+fvg_gapwidth = input.float(0, '', inline = 'fvg_width', group = '公允价值缺口')
+
+fvg_method = input.string('点数', '', options = ['点数', '%', 'ATR'], inline = 'fvg_width', group = '公允价值缺口')
+
+fvg_extend = input.int(0, '延伸 FVG', minval = 0, group = '公允价值缺口')
+
+fvg_fill_transp = input.int(70, '回补部分透明度', minval = 0, maxval = 100, group = '公允价值缺口')
+
+fvg_strength_text_size = input.string('小', '回补强度字体大小', options = ['微小', '小', '正常', '大'], group = '公允价值缺口')
+
+fvg_max_count = input.int(300, 'FVG最大显示数量', minval = 1, group = '公允价值缺口')
+
+fvg_delete_filled = input.bool(true, '完全回补后删除', group = '公允价值缺口')
+
+//Opening Gaps
+show_og = input(true, '显示开盘缺口 (OG)', inline = 'og_css', group = '开盘缺口')
+
+bull_og_css = input.color(#2157f3, '', inline = 'og_css', group = '开盘缺口')
+
+bear_og_css = input.color(#ff1100, '', inline = 'og_css', group = '开盘缺口')
+
+og_usewidth = input(false, '最小宽度', inline = 'og_width', group = '开盘缺口')
+
+og_gapwidth = input.float(0, '', inline = 'og_width', group = '开盘缺口')
+
+og_method = input.string('点数', '', options = ['点数', '%', 'ATR'], inline = 'og_width', group = '开盘缺口')
+
+og_extend = input.int(0, '延伸 OG', minval = 0, group = '开盘缺口')
+
+//Volume Imbalance
+show_vi = input(true, '显示成交量失衡 (VI)', inline = 'vi_css', group = '成交量失衡')
+
+bull_vi_css = input.color(#2157f3, '', inline = 'vi_css', group = '成交量失衡')
+
+bear_vi_css = input.color(#ff1100, '', inline = 'vi_css', group = '成交量失衡')
+
+vi_usewidth = input(false, '最小宽度', inline = 'vi_width', group = '成交量失衡')
+
+vi_gapwidth = input.float(0, '', inline = 'vi_width', group = '成交量失衡')
+
+vi_method = input.string('点数', '', options = ['点数', '%', 'ATR'], inline = 'vi_width', group = '成交量失衡')
+
+vi_extend = input.int(5, '延伸 VI', minval = 0, group = '成交量失衡')
+
+//Dashboard
+show_dash = input(false, '显示仪表盘', group = '仪表盘')
+
+dash_loc = input.string('右下', '仪表盘位置', options = ['右上', '右下', '左下'], group = '仪表盘')
+
+text_size = input.string('微小', '仪表盘大小', options = ['微小', '小', '正常'], group = '仪表盘')
+
+//-----------------------------------------------------------------------------}
+//Functions
+//-----------------------------------------------------------------------------{
+n = bar_index
+atr = ta.atr(200)
+
+//Detect imbalance and return count over time
+imbalance_detection(show, usewidth, method, width, top, btm, condition) =>
+    var is_width = true
+    var count = 0
+
+    if usewidth
+        dist = top - btm
+
+        is_width := switch method
+            '点数' => dist > width
+            '%' => dist / btm * 100 > width
+            'ATR' => dist > atr * width
+        is_width
+
+    is_true = show and condition and is_width
+    count := count + (is_true ? 1 : 0)
+
+    [is_true, count]
+
+//Detect if bullish imbalance is filled and return count over time
+bull_filled(condition, btm) =>
+    var btms = array.new_float(0)
+    var count = 0
+
+    if condition
+        array.unshift(btms, btm)
+
+    size = array.size(btms)
+
+    for i = size > 0 ? size - 1 : na to 0 by 1
+        value = array.get(btms, i)
+
+        if low < value
+            array.remove(btms, i)
+            count := count + 1
+            count
+
+    count
+
+//Detect if bearish imbalance is filled and return count over time
+bear_filled(condition, top) =>
+    var tops = array.new_float(0)
+    var count = 0
+
+    if condition
+        array.unshift(tops, top)
+
+    size = array.size(tops)
+
+    for i = size > 0 ? size - 1 : na to 0 by 1
+        value = array.get(tops, i)
+
+        if high > value
+            array.remove(tops, i)
+            count := count + 1
+            count
+
+    count
+
+//Set table data cells
+set_cells(tb, column, bull_filled, bull_count, bear_filled, bear_count, bull_css, bear_css, table_size) =>
+    table.cell(tb, column, 1, str.tostring(bull_count), text_color = bull_css, text_size = table_size, text_halign = text.align_left)
+
+    table.cell(tb, column, 2, str.format('{0,number,percent}', bull_filled / bull_count), text_color = bull_css, text_size = table_size, text_halign = text.align_left)
+
+    table.cell(tb, column, 3, str.tostring(bear_count), text_color = bear_css, text_size = table_size, text_halign = text.align_left)
+
+    table.cell(tb, column, 4, str.format('{0,number,percent}', bear_filled / bear_count), text_color = bear_css, text_size = table_size, text_halign = text.align_left)
+
+var fvg_strength_size = fvg_strength_text_size == '微小' ? size.tiny : fvg_strength_text_size == '小' ? size.small : fvg_strength_text_size == '正常' ? size.normal : size.large
+
+var bull_fvg_base_boxes = array.new_box(0)
+var bull_fvg_mid_lines = array.new_line(0)
+var bull_fvg_fill_boxes = array.new_box(0)
+var bull_fvg_labels = array.new_label(0)
+var bull_fvg_tops = array.new_float(0)
+var bull_fvg_btms = array.new_float(0)
+var bull_fvg_lefts = array.new_int(0)
+var bull_fvg_rights = array.new_int(0)
+var bull_fvg_left_times = array.new_int(0)
+var bull_fvg_right_times = array.new_int(0)
+var bull_fvg_fill_pct = array.new_float(0)
+
+var bear_fvg_base_boxes = array.new_box(0)
+var bear_fvg_mid_lines = array.new_line(0)
+var bear_fvg_fill_boxes = array.new_box(0)
+var bear_fvg_labels = array.new_label(0)
+var bear_fvg_tops = array.new_float(0)
+var bear_fvg_btms = array.new_float(0)
+var bear_fvg_lefts = array.new_int(0)
+var bear_fvg_rights = array.new_int(0)
+var bear_fvg_left_times = array.new_int(0)
+var bear_fvg_right_times = array.new_int(0)
+var bear_fvg_fill_pct = array.new_float(0)
+
+update_bull_fvg_strength() =>
+    size = array.size(bull_fvg_tops)
+
+    if size > 0
+        for i = size - 1 to 0 by 1
+            top = array.get(bull_fvg_tops, i)
+            btm = array.get(bull_fvg_btms, i)
+            left_time = array.get(bull_fvg_left_times, i)
+            right_time = array.get(bull_fvg_right_times, i)
+            dist = top - btm
+
+            curr_fill = dist > 0 ? math.max(0.0, math.min(1.0, (top - low) / dist)) : 0.0
+            prev_fill = array.get(bull_fvg_fill_pct, i)
+            fill_pct = math.max(prev_fill, curr_fill)
+            array.set(bull_fvg_fill_pct, i, fill_pct)
+
+            if fill_pct >= 1 and fvg_delete_filled
+                base_box = array.get(bull_fvg_base_boxes, i)
+                mid_line = array.get(bull_fvg_mid_lines, i)
+                fill_box = array.get(bull_fvg_fill_boxes, i)
+                lb = array.get(bull_fvg_labels, i)
+                if not na(base_box)
+                    box.delete(base_box)
+                if not na(mid_line)
+                    line.delete(mid_line)
+                if not na(fill_box)
+                    box.delete(fill_box)
+                if not na(lb)
+                    label.delete(lb)
+
+                array.remove(bull_fvg_base_boxes, i)
+                array.remove(bull_fvg_mid_lines, i)
+                array.remove(bull_fvg_fill_boxes, i)
+                array.remove(bull_fvg_labels, i)
+                array.remove(bull_fvg_tops, i)
+                array.remove(bull_fvg_btms, i)
+                array.remove(bull_fvg_lefts, i)
+                array.remove(bull_fvg_rights, i)
+                array.remove(bull_fvg_left_times, i)
+                array.remove(bull_fvg_right_times, i)
+                array.remove(bull_fvg_fill_pct, i)
+                fill_pct
+            else if fill_pct > 0
+                fill_btm = top - dist * fill_pct
+                fill_box = array.get(bull_fvg_fill_boxes, i)
+
+                if na(fill_box)
+                    fill_box := box.new(left_time, top, right_time, fill_btm, xloc = xloc.bar_time, border_color = na, bgcolor = color.new(color.gray, fvg_fill_transp))
+                    array.set(bull_fvg_fill_boxes, i, fill_box)
+                else
+                    box.set_left(fill_box, left_time)
+                    box.set_right(fill_box, right_time)
+                    box.set_top(fill_box, top)
+                    box.set_bottom(fill_box, fill_btm)
+                    box.set_bgcolor(fill_box, color.new(color.gray, fvg_fill_transp))
+
+                text_y = math.avg(top, btm)
+                txt = str.format('{0,number,percent}', fill_pct)
+                lb = array.get(bull_fvg_labels, i)
+
+                if na(lb)
+                    lb := label.new(right_time, text_y, txt, xloc = xloc.bar_time, style = label.style_none, textcolor = color.black, size = fvg_strength_size)
+                    array.set(bull_fvg_labels, i, lb)
+                else
+                    label.set_x(lb, right_time)
+                    label.set_y(lb, text_y)
+                    label.set_text(lb, txt)
+                    label.set_textcolor(lb, color.black)
+                    label.set_size(lb, fvg_strength_size)
+                fill_pct
+            else
+                fill_pct
+
+update_bear_fvg_strength() =>
+    size = array.size(bear_fvg_tops)
+
+    if size > 0
+        for i = size - 1 to 0 by 1
+            top = array.get(bear_fvg_tops, i)
+            btm = array.get(bear_fvg_btms, i)
+            left_time = array.get(bear_fvg_left_times, i)
+            right_time = array.get(bear_fvg_right_times, i)
+            dist = top - btm
+
+            curr_fill = dist > 0 ? math.max(0.0, math.min(1.0, (high - btm) / dist)) : 0.0
+            prev_fill = array.get(bear_fvg_fill_pct, i)
+            fill_pct = math.max(prev_fill, curr_fill)
+            array.set(bear_fvg_fill_pct, i, fill_pct)
+
+            if fill_pct >= 1 and fvg_delete_filled
+                base_box = array.get(bear_fvg_base_boxes, i)
+                mid_line = array.get(bear_fvg_mid_lines, i)
+                fill_box = array.get(bear_fvg_fill_boxes, i)
+                lb = array.get(bear_fvg_labels, i)
+                if not na(base_box)
+                    box.delete(base_box)
+                if not na(mid_line)
+                    line.delete(mid_line)
+                if not na(fill_box)
+                    box.delete(fill_box)
+                if not na(lb)
+                    label.delete(lb)
+
+                array.remove(bear_fvg_base_boxes, i)
+                array.remove(bear_fvg_mid_lines, i)
+                array.remove(bear_fvg_fill_boxes, i)
+                array.remove(bear_fvg_labels, i)
+                array.remove(bear_fvg_tops, i)
+                array.remove(bear_fvg_btms, i)
+                array.remove(bear_fvg_lefts, i)
+                array.remove(bear_fvg_rights, i)
+                array.remove(bear_fvg_left_times, i)
+                array.remove(bear_fvg_right_times, i)
+                array.remove(bear_fvg_fill_pct, i)
+                fill_pct
+            else if fill_pct > 0
+                fill_top = btm + dist * fill_pct
+                fill_box = array.get(bear_fvg_fill_boxes, i)
+
+                if na(fill_box)
+                    fill_box := box.new(left_time, fill_top, right_time, btm, xloc = xloc.bar_time, border_color = na, bgcolor = color.new(color.gray, fvg_fill_transp))
+                    array.set(bear_fvg_fill_boxes, i, fill_box)
+                else
+                    box.set_left(fill_box, left_time)
+                    box.set_right(fill_box, right_time)
+                    box.set_top(fill_box, fill_top)
+                    box.set_bottom(fill_box, btm)
+                    box.set_bgcolor(fill_box, color.new(color.gray, fvg_fill_transp))
+
+                text_y = math.avg(top, btm)
+                txt = str.format('{0,number,percent}', fill_pct)
+                lb = array.get(bear_fvg_labels, i)
+
+                if na(lb)
+                    lb := label.new(right_time, text_y, txt, xloc = xloc.bar_time, style = label.style_none, textcolor = color.black, size = fvg_strength_size)
+                    array.set(bear_fvg_labels, i, lb)
+                else
+                    label.set_x(lb, right_time)
+                    label.set_y(lb, text_y)
+                    label.set_text(lb, txt)
+                    label.set_textcolor(lb, color.black)
+                    label.set_size(lb, fvg_strength_size)
+                fill_pct
+            else
+                fill_pct
+
+prune_bull_fvg(max_count) =>
+    while array.size(bull_fvg_tops) > max_count
+        idx = array.size(bull_fvg_tops) - 1
+        base_box = array.get(bull_fvg_base_boxes, idx)
+        mid_line = array.get(bull_fvg_mid_lines, idx)
+        fill_box = array.get(bull_fvg_fill_boxes, idx)
+        lb = array.get(bull_fvg_labels, idx)
+
+        if not na(base_box)
+            box.delete(base_box)
+        if not na(mid_line)
+            line.delete(mid_line)
+        if not na(fill_box)
+            box.delete(fill_box)
+        if not na(lb)
+            label.delete(lb)
+
+        array.pop(bull_fvg_base_boxes)
+        array.pop(bull_fvg_mid_lines)
+        array.pop(bull_fvg_fill_boxes)
+        array.pop(bull_fvg_labels)
+        array.pop(bull_fvg_tops)
+        array.pop(bull_fvg_btms)
+        array.pop(bull_fvg_lefts)
+        array.pop(bull_fvg_rights)
+        array.pop(bull_fvg_left_times)
+        array.pop(bull_fvg_right_times)
+        array.pop(bull_fvg_fill_pct)
+
+prune_bear_fvg(max_count) =>
+    while array.size(bear_fvg_tops) > max_count
+        idx = array.size(bear_fvg_tops) - 1
+        base_box = array.get(bear_fvg_base_boxes, idx)
+        mid_line = array.get(bear_fvg_mid_lines, idx)
+        fill_box = array.get(bear_fvg_fill_boxes, idx)
+        lb = array.get(bear_fvg_labels, idx)
+
+        if not na(base_box)
+            box.delete(base_box)
+        if not na(mid_line)
+            line.delete(mid_line)
+        if not na(fill_box)
+            box.delete(fill_box)
+        if not na(lb)
+            label.delete(lb)
+
+        array.pop(bear_fvg_base_boxes)
+        array.pop(bear_fvg_mid_lines)
+        array.pop(bear_fvg_fill_boxes)
+        array.pop(bear_fvg_labels)
+        array.pop(bear_fvg_tops)
+        array.pop(bear_fvg_btms)
+        array.pop(bear_fvg_lefts)
+        array.pop(bear_fvg_rights)
+        array.pop(bear_fvg_left_times)
+        array.pop(bear_fvg_right_times)
+        array.pop(bear_fvg_fill_pct)
+
+delete_oldest_bull_fvg() =>
+    if array.size(bull_fvg_tops) > 0
+        idx = array.size(bull_fvg_tops) - 1
+        base_box = array.get(bull_fvg_base_boxes, idx)
+        mid_line = array.get(bull_fvg_mid_lines, idx)
+        fill_box = array.get(bull_fvg_fill_boxes, idx)
+        lb = array.get(bull_fvg_labels, idx)
+
+        if not na(base_box)
+            box.delete(base_box)
+        if not na(mid_line)
+            line.delete(mid_line)
+        if not na(fill_box)
+            box.delete(fill_box)
+        if not na(lb)
+            label.delete(lb)
+
+        array.pop(bull_fvg_base_boxes)
+        array.pop(bull_fvg_mid_lines)
+        array.pop(bull_fvg_fill_boxes)
+        array.pop(bull_fvg_labels)
+        array.pop(bull_fvg_tops)
+        array.pop(bull_fvg_btms)
+        array.pop(bull_fvg_lefts)
+        array.pop(bull_fvg_rights)
+        array.pop(bull_fvg_left_times)
+        array.pop(bull_fvg_right_times)
+        array.pop(bull_fvg_fill_pct)
+
+delete_oldest_bear_fvg() =>
+    if array.size(bear_fvg_tops) > 0
+        idx = array.size(bear_fvg_tops) - 1
+        base_box = array.get(bear_fvg_base_boxes, idx)
+        mid_line = array.get(bear_fvg_mid_lines, idx)
+        fill_box = array.get(bear_fvg_fill_boxes, idx)
+        lb = array.get(bear_fvg_labels, idx)
+
+        if not na(base_box)
+            box.delete(base_box)
+        if not na(mid_line)
+            line.delete(mid_line)
+        if not na(fill_box)
+            box.delete(fill_box)
+        if not na(lb)
+            label.delete(lb)
+
+        array.pop(bear_fvg_base_boxes)
+        array.pop(bear_fvg_mid_lines)
+        array.pop(bear_fvg_fill_boxes)
+        array.pop(bear_fvg_labels)
+        array.pop(bear_fvg_tops)
+        array.pop(bear_fvg_btms)
+        array.pop(bear_fvg_lefts)
+        array.pop(bear_fvg_rights)
+        array.pop(bear_fvg_left_times)
+        array.pop(bear_fvg_right_times)
+        array.pop(bear_fvg_fill_pct)
+
+prune_total_fvg(max_count) =>
+    while array.size(bull_fvg_tops) + array.size(bear_fvg_tops) > max_count
+        bull_has = array.size(bull_fvg_tops) > 0
+        bear_has = array.size(bear_fvg_tops) > 0
+
+        if bull_has and bear_has
+            bull_old_time = array.get(bull_fvg_left_times, array.size(bull_fvg_left_times) - 1)
+            bear_old_time = array.get(bear_fvg_left_times, array.size(bear_fvg_left_times) - 1)
+
+            if bull_old_time <= bear_old_time
+                delete_oldest_bull_fvg()
+            else
+                delete_oldest_bear_fvg()
+        else if bull_has
+            delete_oldest_bull_fvg()
+        else if bear_has
+            delete_oldest_bear_fvg()
+
+//-----------------------------------------------------------------------------}
+//Volume Imbalances
+//-----------------------------------------------------------------------------{
+//Bullish
+bull_gap_top = math.min(close, open)
+bull_gap_btm = math.max(close[1], open[1])
+
+[bull_vi, bull_vi_count] = imbalance_detection(show_vi, vi_usewidth, vi_method, vi_gapwidth, bull_gap_top, bull_gap_btm, open > close[1] and high[1] > low and close > close[1] and open > open[1] and high[1] < bull_gap_top)
+
+bull_vi_filled = bull_filled(bull_vi[1], bull_gap_btm[1])
+
+//Bearish
+bear_gap_top = math.min(close[1], open[1])
+bear_gap_btm = math.max(close, open)
+
+[bear_vi, bear_vi_count] = imbalance_detection(show_vi, vi_usewidth, vi_method, vi_gapwidth, bear_gap_top, bear_gap_btm, open < close[1] and low[1] < high and close < close[1] and open < open[1] and low[1] > bear_gap_btm)
+
+bear_vi_filled = bear_filled(bear_vi[1], bear_gap_top[1])
+
+if bull_vi
+    box.new(n - 1, bull_gap_top, n + vi_extend, bull_gap_btm, border_color = bull_vi_css, bgcolor = na, border_style = line.style_dotted)
+
+if bear_vi
+    box.new(n - 1, bear_gap_top, n + vi_extend, bear_gap_btm, border_color = bear_vi_css, bgcolor = na, border_style = line.style_dotted)
+
+//-----------------------------------------------------------------------------}
+//Opening Gaps
+//-----------------------------------------------------------------------------{
+//Bullish
+[bull_og, bull_og_count] = imbalance_detection(show_og, og_usewidth, og_method, og_gapwidth, bull_gap_top, bull_gap_btm, low > high[1])
+
+bull_og_filled = bull_filled(bull_og, bull_gap_btm)
+
+//Bullish
+[bear_og, bear_og_count] = imbalance_detection(show_og, og_usewidth, og_method, og_gapwidth, bear_gap_top, bear_gap_btm, high < low[1])
+
+bear_og_filled = bear_filled(bear_og, bear_gap_top)
+
+if bull_og
+    box.new(n - 1, bull_gap_top, n + og_extend, bull_gap_btm, border_color = na, bgcolor = color.new(bull_og_css, 50), text = 'OG', text_color = chart.fg_color)
+
+if bear_og
+    box.new(n - 1, bear_gap_top, n + og_extend, bear_gap_btm, border_color = na, bgcolor = color.new(bear_og_css, 50), text = 'OG', text_color = chart.fg_color)
+
+########The code is still under modification and testing; the full version will be released once it is stable.###########
